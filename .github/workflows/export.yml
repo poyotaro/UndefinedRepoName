@@ -1,0 +1,22 @@
+# ランキングの集計を Worker から取り、GitHub Pages（docs/ranking.txt）に書き出す（15 分ごと）。ワールドは Pages の URL を読む（信頼ドメイン）
+name: export-ranking
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch
+        run: curl -fsS https://poyo-billiards-ranking.rankingserver.workers.dev/export.txt -o docs/ranking.txt
+      - name: Commit
+        run: |
+          git config user.name "ranking-bot"
+          git config user.email "ranking-bot@users.noreply.github.com"
+          git add docs/ranking.txt
+          git diff --cached --quiet || git commit -m "ranking: $(date -u +%Y-%m-%dT%H:%MZ)"
+          git push

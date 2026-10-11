@@ -1,13 +1,15 @@
-﻿{
+{
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "poyo-billiards-probe",
+  "name": "poyo-billiards-ranking",
   "main": "src/index.js",
   "compatibility_date": "2026-10-01",
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "poyo-billiards-probe",
-      "database_id": "d49febae-1bb1-4957-89a2-2a4a8cf6bb44"
+      "database_name": "poyo-billiards-ranking",
+      "database_id": "e55d8819-0f2c-47ed-9087-91f460497078"
     }
-  ]
+  ],
+  // 古い断片・報告の掃除（30 分ごと）
+  "triggers": { "crons": ["*/30 * * * *"] }
 }
