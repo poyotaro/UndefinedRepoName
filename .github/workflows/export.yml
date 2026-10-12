@@ -1,4 +1,5 @@
-# ランキングの集計を Worker から取り、GitHub Pages（docs/ranking.txt）に書き出す（15 分ごと）。ワールドは Pages の URL を読む（信頼ドメイン）
+# ランキングの集計（プロトコル v2、2026-10-12）：Worker から新しい記録だけを読み、state/ の表を更新して、GitHub Pages（docs/ranking2.txt・docs/me/NN.txt）を書き出す（15 分ごと）。
+# ワールドは Pages の URL を読む（信頼ドメイン）。変化がなければコミットしない。秘密 RANKING_KEY = Worker の EXPORT_KEY
 name: export-ranking
 on:
   schedule:
@@ -6,22 +7,25 @@ on:
   workflow_dispatch:
 permissions:
   contents: write
+concurrency:
+  group: export-ranking
+  cancel-in-progress: false
 jobs:
   export:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Fetch
-        run: |
-          curl -fsS https://poyo-billiards-ranking.rankingserver.workers.dev/export.txt -o docs/ranking.txt
-          # 書き出し v2：「@@<TAB>パス」で区切られた束を分けて置く（docs/ranking2.txt と docs/me/00..63.txt）
-          curl -fsS https://poyo-billiards-ranking.rankingserver.workers.dev/bundle.txt -o /tmp/bundle.txt
-          mkdir -p docs/me
-          awk -F'	' '/^@@	/ { if (f) close(f); f = $2; printf "" > f; next } f { print >> f }' /tmp/bundle.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Update
+        env:
+          RANKING_KEY: ${{ secrets.RANKING_KEY }}
+        run: node tools/update.mjs
       - name: Commit
         run: |
           git config user.name "ranking-bot"
           git config user.email "ranking-bot@users.noreply.github.com"
-          git add docs/ranking.txt docs/ranking2.txt docs/me
+          git add docs state
           git diff --cached --quiet || git commit -m "ranking: $(date -u +%Y-%m-%dT%H:%MZ)"
           git push

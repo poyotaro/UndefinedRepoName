@@ -3,13 +3,9 @@
   "name": "poyo-billiards-ranking",
   "main": "src/index.js",
   "compatibility_date": "2026-10-01",
-  "d1_databases": [
-    {
-      "binding": "DB",
-      "database_name": "poyo-billiards-ranking",
-      "database_id": "e55d8819-0f2c-47ed-9087-91f460497078"
-    }
-  ],
-  // 古い断片・報告の掃除（30 分ごと）
-  "triggers": { "crons": ["*/30 * * * *"] }
+  // 断片の組み立てと記録の保管（プロトコル v2、2026-10-12）。無料プランは SQLite の Durable Object
+  "durable_objects": { "bindings": [{ "name": "ASM", "class_name": "Assembler" }] },
+  "migrations": [{ "tag": "v2", "new_sqlite_classes": ["Assembler"] }]
+  // 秘密（wrangler secret put）：SALT（送り元の IP のハッシュの塩）、EXPORT_KEY（/delta.txt の鍵。GitHub の Secrets の RANKING_KEY と同じ）
+  // 旧 D1（poyo-billiards-ranking）は v1 の時のもの。今は使っていない
 }

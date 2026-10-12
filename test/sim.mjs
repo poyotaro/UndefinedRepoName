@@ -1,59 +1,39 @@
-// ランキングの通し確認：ワールドと同じ符号化で、2 人のランク戦の報告と名前を送り、集計を読む。
+// ランキングの通し確認（プロトコル v2）：ワールドと同じ符号で記録と名前を送り、集計（tools/update.mjs）が読む差分を表示する。
 // 使い方：node test/sim.mjs [サーバーの URL（既定 http://127.0.0.1:8799）]
+//   続けて：RANKING_URL=http://127.0.0.1:8799 RANKING_KEY=localkey node tools/update.mjs <出力先>
+import { encodeRecord, encodeName, decodeRecord, decodeName } from "../src/codec.js";
+
 const base = process.argv[2] || "http://127.0.0.1:8799";
+async function send(words, image, ip) {
+  for (const n of words) {
+    const r = await fetch(base + "/2/" + n, { headers: { accept: image ? "image/png" : "text/plain", "cf-connecting-ip": ip } });
+    await r.arrayBuffer();
+  }
+}
+const record = (ip, r) => send(encodeRecord(r), false, ip);
+const name = (ip, rid, s) => send(encodeName(rid, s), true, ip);
 
-function words(value, count) {          // 大きい桁から 10bit ずつ
-  const out = [];
-  for (let i = count - 1; i >= 0; i--) out.push(Math.floor(value / Math.pow(1024, i)) % 1024);
-  return out;
-}
-function halfA(matchId, result, kind, ranked) { return words(matchId * 64 + result * 16 + kind * 2 + ranked, 3); }
-function halfB(rid) { return words(rid, 3); }
-function nameWords(rid, name) {
-  const bits = [];
-  for (let i = 29; i >= 0; i--) bits.push((rid >> i) & 1);
-  for (const ch of name) { const c = ch.charCodeAt(0); for (let i = 15; i >= 0; i--) bits.push((c >> i) & 1); }
-  while (bits.length % 10) bits.push(0);
-  const out = [];
-  for (let i = 0; i < bits.length; i += 10) out.push(parseInt(bits.slice(i, i + 10).join(""), 2));
-  return out;
-}
-async function send(n, image, ip) {
-  const r = await fetch(base + "/" + n, { headers: { accept: image ? "image/png" : "text/plain", "cf-connecting-ip": ip } });
-  await r.arrayBuffer();
-}
-async function frame(head, ws, image, ip) {
-  await send(head * 1024 + ws[0], image, ip);
-  for (let i = 1; i < ws.length; i++) await send(2 * 1024 + ws[i], image, ip);
-}
-async function report(ip, matchId, rid, result, kind, ranked) {
-  // 文字列の経路に A、画像の経路に B（実際は並行。ここでは順に）
-  await frame(3, halfA(matchId, result, kind, ranked), false, ip);
-  await frame(3, halfB(rid), true, ip);
-}
-async function name(ip, rid, s) {
-  await send(1 * 1024 + s.length, false, ip);
-  for (const w of nameWords(rid, s)) await send(2 * 1024 + w, false, ip);
-}
+// 符号の往復
+const sample = { rid: 123456789, opp: 987654321, kind: 1, ranked: 1, result: 2, mid: 13 };
+const back = decodeRecord(encodeRecord(sample));
+if (JSON.stringify(back) !== JSON.stringify(sample)) throw new Error("record roundtrip " + JSON.stringify(back));
+if (decodeName(encodeName(5, "ぽよ\tたろう")).name !== "ぽよ たろう") throw new Error("name roundtrip");
+const broken = encodeRecord(sample); broken[3] ^= 1;
+if (decodeRecord(broken) !== null) throw new Error("check bits");
+console.log("codec ok (" + encodeRecord(sample).length + " words per record, " + encodeName(1, "poyotaro").length + " per 8-char name)");
 
-const A = 123456789, B = 987654321;
+const A = 123456789, B = 987654321, C = 555;
 await name("10.0.0.1", A, "ぽよたろう");
 await name("10.0.0.2", B, "Rival");
-for (let m = 1; m <= 3; m++) {
-  const matchId = 5000000 + m;
-  await report("10.0.0.1", matchId, A, 1, 0, 1);   // A の端末：A 勝ち
-  await report("10.0.0.1", matchId, B, 0, 0, 1);   //         ：B の分も代わりに
-  await report("10.0.0.2", matchId, B, 0, 0, 1);   // B の端末：B 負け（重複は無視される）
+for (let m = 1; m <= 3; m++) {                               // 9 ボールのランク戦 3 回（A 勝ち）。2 人がそれぞれ自分の分を送る
+  await record("10.0.0.1", { rid: A, opp: B, kind: 0, ranked: 1, result: 1, mid: m });
+  await record("10.0.0.2", { rid: B, opp: A, kind: 0, ranked: 1, result: 0, mid: m });
 }
-await report("10.0.0.3", 6000001, A, 1, 3, 0);     // スヌーカーの普通の試合（スタッツだけ）
-// 10 ボールのランク戦（B 勝ち）。9 ボールとは別の順位になる（2026-10-12）
-await report("10.0.0.1", 7000001, A, 0, 1, 1);
-await report("10.0.0.2", 7000001, B, 1, 1, 1);
-const text = await (await fetch(base + "/export.txt")).text();
-console.log(text);
-const bundle = await (await fetch(base + "/bundle.txt")).text();
-// 束のうち、ランキングと中身のある自分のファイルだけ見せる
-for (const part of bundle.split("@@\t").slice(1)) {
-  const lines = part.trimEnd().split("\n");
-  if (lines.length > 2 || lines[0].endsWith("ranking2.txt")) console.log("== " + lines.join("\n"));
-}
+await record("10.0.0.2", { rid: B, opp: A, kind: 1, ranked: 1, result: 1, mid: 4 });   // 10 ボール：B だけが送った（10 分待ってから半分の重み）
+await record("10.0.0.3", { rid: C, opp: 0, kind: 3, ranked: 0, result: 1, mid: 5 });   // スヌーカーのダブルス（相手なし）
+// 同じ IP から 2 人分の断片が混ざる（同じ家）：検査で捨てられる
+const w1 = encodeRecord({ rid: A, opp: B, kind: 2, ranked: 1, result: 1, mid: 6 }), w2 = encodeRecord({ rid: B, opp: A, kind: 2, ranked: 1, result: 0, mid: 6 });
+for (let i = 0; i < w1.length; i++) { await send([w1[i]], false, "10.0.0.9"); await send([w2[i]], false, "10.0.0.9"); }
+const d = await (await fetch(base + "/delta.txt?key=localkey&since=0,0")).text();
+console.log(d);
+if ((await fetch(base + "/delta.txt?key=wrong")).status !== 403) throw new Error("key");
