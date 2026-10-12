@@ -12,11 +12,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Fetch
-        run: curl -fsS https://poyo-billiards-ranking.rankingserver.workers.dev/export.txt -o docs/ranking.txt
+        run: |
+          curl -fsS https://poyo-billiards-ranking.rankingserver.workers.dev/export.txt -o docs/ranking.txt
+          # 書き出し v2：「@@<TAB>パス」で区切られた束を分けて置く（docs/ranking2.txt と docs/me/00..63.txt）
+          curl -fsS https://poyo-billiards-ranking.rankingserver.workers.dev/bundle.txt -o /tmp/bundle.txt
+          mkdir -p docs/me
+          awk -F'	' '/^@@	/ { if (f) close(f); f = $2; printf "" > f; next } f { print >> f }' /tmp/bundle.txt
       - name: Commit
         run: |
           git config user.name "ranking-bot"
           git config user.email "ranking-bot@users.noreply.github.com"
-          git add docs/ranking.txt
+          git add docs/ranking.txt docs/ranking2.txt docs/me
           git diff --cached --quiet || git commit -m "ranking: $(date -u +%Y-%m-%dT%H:%MZ)"
           git push

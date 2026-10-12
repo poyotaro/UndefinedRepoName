@@ -4,8 +4,9 @@
 //   試合の報告は 2 つの半分：文字列の経路で A（試合番号・結果・種目・ランク戦か）、画像の経路で B（プレイヤーの ID）。同じ IP の A と B を順に組む。
 //   同じ試合の 2 人の報告がそろったら、ランク戦はレーティングを動かす（1 か所からだけの報告は動きを半分に、同じ相手との連戦は減らす）。
 //   GET /export.txt で集計（ワールドが読む形）。GitHub Actions がこれを GitHub Pages に写す。
+//   GET /bundle.txt で書き出し v2（種目ごとのランキング・自分の順位のファイル 64 個）の束（2026-10-12）。
 
-import { Png1x1, receive, exportText, tryRate } from "./protocol.js";
+import { Png1x1, receive, exportText, exportBundle, tryRate } from "./protocol.js";
 
 const noStore = { "Cache-Control": "no-store, max-age=0" };
 
@@ -14,6 +15,7 @@ export default {
     if (request.method !== "GET") return new Response("method", { status: 405 });
     const path = new URL(request.url).pathname.slice(1);
     if (path === "export.txt") return new Response(await exportText(env), { headers: { ...noStore, "Content-Type": "text/plain; charset=utf-8" } });
+    if (path === "bundle.txt") return new Response(await exportBundle(env), { headers: { ...noStore, "Content-Type": "text/plain; charset=utf-8" } });
     if (!/^\d{1,4}$/.test(path)) return new Response("not found", { status: 404 });
     const n = Number(path);
     if (n >= 4096) return new Response("not found", { status: 404 });

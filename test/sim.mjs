@@ -46,5 +46,14 @@ for (let m = 1; m <= 3; m++) {
   await report("10.0.0.2", matchId, B, 0, 0, 1);   // B の端末：B 負け（重複は無視される）
 }
 await report("10.0.0.3", 6000001, A, 1, 3, 0);     // スヌーカーの普通の試合（スタッツだけ）
+// 10 ボールのランク戦（B 勝ち）。9 ボールとは別の順位になる（2026-10-12）
+await report("10.0.0.1", 7000001, A, 0, 1, 1);
+await report("10.0.0.2", 7000001, B, 1, 1, 1);
 const text = await (await fetch(base + "/export.txt")).text();
 console.log(text);
+const bundle = await (await fetch(base + "/bundle.txt")).text();
+// 束のうち、ランキングと中身のある自分のファイルだけ見せる
+for (const part of bundle.split("@@\t").slice(1)) {
+  const lines = part.trimEnd().split("\n");
+  if (lines.length > 2 || lines[0].endsWith("ranking2.txt")) console.log("== " + lines.join("\n"));
+}

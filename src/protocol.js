@@ -7,7 +7,11 @@ export const HeadReport = 3, HeadMore = 2, HeadName = 1;
 export const ReportWords = 3;           // 報告の半分は 30bit
 export const MaxNameChars = 32;
 export const BaseRating = 1500, BaseK = 32;
-const FamilyOfKind = [0, 0, 0, 1, 2, 3, -1];   // 種目（PlayerProgress.Kind*）→ ファミリー（0 プール・1 スヌーカー・2 ピラミッド・3 キャロム）
+// レーティングの単位は種目（2026-10-12 ユーザー指定：9・10・8 ボールは別のランキング）。ratings.family には種目の番号を入れる（列の名前は昔のまま）。
+// その他（6）は順位なし
+const FamilyOfKind = [0, 1, 2, 3, 4, 5, -1];
+// 書き出し v1（古いワールドの板）の 4 列：プール→9 ボール、スヌーカー、ピラミッド、キャロム→3 クッション
+const V1Families = [0, 3, 4, 5];
 const PairWindowMs = 3 * 3600 * 1000;          // 同じ試合番号の報告とみなす時間
 const HalfWindowMs = 60 * 1000;                // A と B を組む時間
 
@@ -161,7 +165,7 @@ export async function exportText(env) {
   const names = new Map((await db.prepare("SELECT rid, name FROM players").all()).results.map(r => [r.rid, r.name]));
   const nm = rid => (names.get(rid) || "").replace(/[\t\r\n]/g, " ") || ("#" + rid.toString(36));
   for (let f = 0; f < 4; f++) {
-    const rows = (await db.prepare("SELECT rid, rating, games FROM ratings WHERE family = ? ORDER BY rating DESC LIMIT 50").bind(f).all()).results;
+    const rows = (await db.prepare("SELECT rid, rating, games FROM ratings WHERE family = ? ORDER BY rating DESC LIMIT 50").bind(V1Families[f]).all()).results;
     rows.forEach((r, i) => lines.push(["F", f, i + 1, r.rid, Math.round(r.rating), r.games, nm(r.rid)].join("\t")));
   }
   const totals = (await db.prepare("SELECT rid, SUM(matches) AS m, SUM(wins) AS w FROM stats GROUP BY rid").all()).results;
@@ -171,4 +175,50 @@ export async function exportText(env) {
   const rated = totals.filter(r => r.m >= 20).map(r => ({ ...r, p: Math.round(1000 * r.w / r.m) }));
   top(rated, "p", 50).forEach((r, i) => lines.push(["S", 2, i + 1, r.rid, r.p, nm(r.rid)].join("\t")));
   return lines.join("\n") + "\n";
+}
+
+/// 種目の数（PlayerProgress.Kind*：0 9 ボール・1 10 ボール・2 8 ボール・3 スヌーカー・4 ピラミッド・5 スリークッション。6 その他は順位なし）
+export const KindCount = 6;
+/// 自分の順位のファイルの分け方（rid % MeShards。ワールドは自分の分だけ読む）
+export const MeShards = 64;
+
+/// 書き出し v2（2026-10-12）：種目ごとのランキングと、自分の順位のファイル。GitHub Actions が 1 つの束で受け取って Pages に分けて置く。
+///   束の書式：「@@<TAB>パス」の行の後に、そのファイルの中身。docs/protocol.md の「書き出し v2」
+export async function exportBundle(env) {
+  const db = env.DB;
+  const now = Math.floor(Date.now() / 1000);
+  const names = new Map((await db.prepare("SELECT rid, name FROM players").all()).results.map(r => [r.rid, r.name]));
+  const nm = rid => (names.get(rid) || "").replace(/[\t\r\n]/g, " ") || ("#" + rid.toString(36));
+  const top = ["v2\t" + now];
+  const me = new Map();   // shard → 行
+  const add = (rid, line) => {
+    const s = ((rid % MeShards) + MeShards) % MeShards;
+    if (!me.has(s)) me.set(s, []);
+    me.get(s).push(line);
+  };
+  for (let k = 0; k < KindCount; k++) {
+    const rows = (await db.prepare("SELECT rid, rating, games FROM ratings WHERE family = ? AND games > 0 ORDER BY rating DESC").bind(k).all()).results;
+    top.push(["N", k, rows.length].join("\t"));
+    rows.forEach((r, i) => {
+      if (i < 20) top.push(["R", k, i + 1, r.rid, Math.round(r.rating), r.games, nm(r.rid)].join("\t"));
+      add(r.rid, ["M", r.rid, k, i + 1, rows.length, Math.round(r.rating), r.games].join("\t"));
+    });
+  }
+  const totals = (await db.prepare("SELECT rid, SUM(matches) AS m, SUM(wins) AS w FROM stats GROUP BY rid").all()).results;
+  const sorted = (arr, key) => [...arr].sort((a, b) => b[key] - a[key]);
+  sorted(totals, "m").slice(0, 10).forEach((r, i) => top.push(["S", 0, i + 1, r.rid, r.m, nm(r.rid)].join("\t")));
+  sorted(totals, "w").slice(0, 10).forEach((r, i) => top.push(["S", 1, i + 1, r.rid, r.w, nm(r.rid)].join("\t")));
+  const rated = totals.filter(r => r.m >= 20).map(r => ({ ...r, p: Math.round(1000 * r.w / r.m) }));
+  sorted(rated, "p").slice(0, 10).forEach((r, i) => top.push(["S", 2, i + 1, r.rid, r.p, nm(r.rid)].join("\t")));
+  // 自分の通算（試合数・勝利数と、その順位）
+  const byM = sorted(totals, "m"), byW = sorted(totals, "w");
+  const rankM = new Map(byM.map((r, i) => [r.rid, i + 1])), rankW = new Map(byW.map((r, i) => [r.rid, i + 1]));
+  totals.forEach(r => add(r.rid, ["T", r.rid, r.m, r.w, rankM.get(r.rid), rankW.get(r.rid), totals.length].join("\t")));
+  const out = ["@@\tdocs/ranking2.txt", ...top];
+  for (let s = 0; s < MeShards; s++) {
+    out.push("@@\tdocs/me/" + String(s).padStart(2, "0") + ".txt");
+    out.push("v2\t" + now);
+    for (const line of me.get(s) || []) out.push(line);
+  }
+  return out.join("\n") + "\n";
 }
