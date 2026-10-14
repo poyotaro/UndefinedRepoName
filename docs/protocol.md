@@ -12,7 +12,7 @@ v1（W5）からの変更の理由：Cloudflare の無料枠の節約。v1 は 1
    - 同じ IP から 2 人分の断片が混ざると検査値で捨てる。
 3. GitHub Actions（tools/update.mjs）が、毎時 0・15・30・45 分に Worker の Cron Trigger から workflow_dispatch で起動されて（2026-10-14。GitHub の schedule は 5〜25 分遅れるので毎時 7 分の予備だけ） `GET /delta.txt?key=<EXPORT_KEY>&since=<記録>,<名前>` で前回より後の記録だけを読み、
    組み合わせ・スタッツ・レーティング・順位を計算して、state/（集計の状態）と docs/（Pages）を更新する。変化がなければコミットしない。
-4. ワールドの板は Pages の `ranking2.txt` と自分の `me/NN.txt`（NN = ID % 64）を読む。読むのは入って 10 秒後と、15 分の区切りの 3 分後（afterSlot、時刻は Networking.GetNetworkDateTime）。右上に次に読むまでの残り時間を出す。
+4. ワールドの板は Pages の `ranking2.txt` と自分の `me/NN.txt`（NN = ID % 64）を読む。読むのは入って 10 秒後と、15 分の区切りの 5 分後（afterSlot、時刻は Networking.GetNetworkDateTime）。右上に次に読むまでの残り時間を出す。
 
 ## 試合の記録（77bit = 7 語、文字列の経路）
 試合が終わった時、参加者本人の端末が自分の分だけを送る（観客は送らない。1 人プレイ・ファウルなしの練習・無効試合は送らない）。
