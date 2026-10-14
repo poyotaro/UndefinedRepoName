@@ -43,6 +43,10 @@ export default {
   ///   GitHub の schedule は 5〜25 分遅れるので、ワールドの板が更新の時刻を数えられるように、起動はこちらで決める。
   ///   GitHub 側の schedule は予備として残す（このトークンが切れても集計は止まらない）
   async scheduled(controller, env, ctx) {
+    console.log("cron", controller.cron, new Date(controller.scheduledTime).toISOString(), "now", new Date().toISOString());
+    // 起動するのは 15 分の区切りから 1 分以内の予定だけ（Cron の式を試しに細かくしても集計は増えない）。
+    //   予定の時刻が区切りから数十秒ずれることがある（2026-10-14 は 59 秒）ので、1 分の幅をとる
+    if (controller.scheduledTime % (15 * 60 * 1000) >= 60 * 1000) return;
     if (!env.GH_DISPATCH_TOKEN) { console.log("dispatch: no token"); return; }
     const res = await fetch(`https://api.github.com/repos/${GitHubRepo}/actions/workflows/export.yml/dispatches`, {
       method: "POST",
