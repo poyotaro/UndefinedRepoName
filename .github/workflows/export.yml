@@ -1,4 +1,4 @@
-# ランキングの集計（プロトコル v2、2026-10-12）：Worker から新しい記録だけを読み、state/ の表を更新して、GitHub Pages（docs/ranking2.txt・docs/me/NN.txt）を書き出す（15 分ごと）。
+# ランキングの集計（2026-10-12 v2、2026-10-14 送信は v3）：Worker から新しい記録だけを読み、state/ の表を更新して、GitHub Pages（docs/ranking2.txt・docs/me/NN.txt）を書き出す（15 分ごと）。
 # ワールドは Pages の URL を読む（信頼ドメイン）。変化がなければコミットしない。秘密 RANKING_KEY = Worker の EXPORT_KEY
 name: export-ranking
 on:

@@ -160,14 +160,15 @@ const rankM = new Map(byM.map((r, i) => [r.rid, i + 1])), rankW = new Map(byW.ma
 for (const r of all) add(r.rid, ["T", r.rid, r.m, r.w, rankM.get(r.rid), rankW.get(r.rid), all.length].join("\t"));
 for (const [rid, n] of names) add(rid, ["P", rid, n].join("\t"));
 
-// ranking2.txt は中身が変わった時だけ（先頭の時刻の行だけの変化では書かない）
-const rankFile = sp("docs", "ranking2.txt");
-const oldBody = fs.existsSync(rankFile) ? fs.readFileSync(rankFile, "utf8").split("\n").slice(1).join("\n") : null;
-const newBody = body.join("\n") + "\n";
-if (oldBody !== newBody) writeIfChanged(rankFile, "v2\t" + Math.floor(now / 1000) + "\n" + newBody);
 let shardsChanged = 0;
 for (let s = 0; s < MeShards; s++) {
   const lines = (shard.get(s) || []).sort((p, q) => p.rid - q.rid).map(e => e.line);
   if (writeIfChanged(sp("docs", "me", String(s).padStart(2, "0") + ".txt"), ["v2", ...lines].join("\n") + "\n")) shardsChanged++;
 }
+// ranking2.txt は中身か、だれかの順位のファイル（me/NN.txt）が変わった時だけ書く（先頭の時刻の行だけの変化では書かない）。
+//   板は先頭の時刻が変わった時に自分のファイルを読み直すので、上位に載らない人の順位だけが変わった時も時刻を進める（2026-10-14）
+const rankFile = sp("docs", "ranking2.txt");
+const oldBody = fs.existsSync(rankFile) ? fs.readFileSync(rankFile, "utf8").split("\n").slice(1).join("\n") : null;
+const newBody = body.join("\n") + "\n";
+if (oldBody !== newBody || shardsChanged > 0) writeIfChanged(rankFile, "v2\t" + Math.floor(now / 1000) + "\n" + newBody);
 console.log(`records ${counted} counted, ${pending.length} waiting; players ${all.length}; names ${names.size}; ranking ${oldBody !== newBody ? "updated" : "same"}; shards changed ${shardsChanged}`);

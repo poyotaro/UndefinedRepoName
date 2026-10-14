@@ -17,7 +17,8 @@ const FrameTimeoutMs = 3 * 60 * 1000;     // 断片の間がこれより空い�
 const KeepMs = 24 * 3600 * 1000;          // 集計が読んだ記録を消すまでの時間
 const GitHubRepo = "poyotaro/UndefinedRepoName";   // 集計（.github/workflows/export.yml）のあるリポジトリ
 const DeltaLimit = 5000;
-const NewIdsPerDay = 20;                  // 1 つの IP（ハッシュ）から 1 日に新しく作れる ID の数
+const NewIdsPerDay = 20;
+const PairWaitRunMs = 25 * 60 * 1000;     // 最後の記録からこの間は、新しい記録が無くても集計を起動する（集計は相手の記録を 10 分待つ）                  // 1 つの IP（ハッシュ）から 1 日に新しく作れる ID の数
 // v2 からの移行（2026-10-14）：v2 の ID（rid30）に先に割り当てる新しい ID。その人が v3 で登録すると、uid の下 30bit で同じ行になる
 const LegacyPlayers = [[1, 410606822], [2, 89809756], [3, 237702707]];
 
@@ -64,7 +65,7 @@ export default {
     if (!env.GH_DISPATCH_TOKEN) { console.log("dispatch: no token"); return; }
     // 前回の起動の後に新しい記録・名前が来ていなければ起動しない（GitHub Actions の実行を減らす。v3）
     const asm = assembler(env);
-    const mark = await asm.newSince();
+    const mark = await asm.newSince(Date.now());
     if (!mark) return;
     const res = await fetch(`https://api.github.com/repos/${GitHubRepo}/actions/workflows/export.yml/dispatches`, {
       method: "POST",
@@ -137,7 +138,10 @@ export class Assembler extends DurableObject {
     }
     if (ver === 3) {
       const r = decodeRecord3(f.words);
-      if (!r || !this.known(r.rid) || (r.opp !== 0 && !this.known(r.opp))) return "bad";
+      if (!r || !this.known(r.rid)) return "bad";
+      if (r.oppV2) r.opp = this.idOfRid30(r.opp, now);   // 相手がまだ登録していない：v2 の ID を読み替える（後で登録すると同じ行）
+      else if (r.opp !== 0 && !this.known(r.opp)) { r.opp = 0; r.ranked = 0; }   // 相手が分からない（版の混ざったインスタンスなど）：自分の分だけ数える
+      if (r.opp === r.rid) return "bad";
       await this.insertRecord(r, ip, now);
       return "ok";
     }
@@ -146,7 +150,9 @@ export class Assembler extends DurableObject {
       const r = decodeRecord(f.words);
       if (!r) return "bad";
       r.rid = this.idOfRid30(r.rid, now);
-      r.opp = r.opp === 0 ? 0 : this.idOfRid30(r.opp, now);
+      // 古いワールドの端末は、新しいワールドの相手の ID（配られた小さな番号）を rid30 として送ってくる。
+      //   小さな値（約 419 万未満）で登録簿にあるものは配った ID とみなす（本物の rid30 がこの範囲なのは 0.4%）
+      r.opp = r.opp === 0 ? 0 : (r.opp < 4194304 && this.known(r.opp) ? r.opp : this.idOfRid30(r.opp, now));
       await this.insertRecord(r, ip, now);
     } else {
       const r = decodeName(f.words);
@@ -192,12 +198,15 @@ export class Assembler extends DurableObject {
     return this.sql.exec("INSERT INTO players (uid, rid30, ts) VALUES (NULL, ?, ?) RETURNING id", rid30, now).one().id;
   }
 
-  /// 集計の起動（Cron）用：前回の起動の後に新しい記録・名前があれば、その印（記録と名前の最大の seq）を返す。無ければ null
-  async newSince() {
-    const rec = this.sql.exec("SELECT COALESCE(MAX(seq), 0) AS m FROM records").one().m;
+  /// 集計の起動（Cron）用：前回の起動の後に新しい記録・名前があれば、その印（記録と名前の最大の seq）を返す。無ければ null。
+  ///   最後の記録から 25 分の間は新しいものが無くても起動する（相手の記録を 10 分待っている記録を、待ちが明けた後の回で数えるため）
+  async newSince(now) {
+    const last = this.sql.exec("SELECT COALESCE(MAX(seq), 0) AS m, COALESCE(MAX(ts), 0) AS t FROM records").one();
+    const rec = last.m;
     const nam = this.sql.exec("SELECT COALESCE(MAX(seq), 0) AS m FROM names").one().m;
     const kv = new Map(this.sql.exec("SELECT k, v FROM kv").toArray().map(r => [r.k, r.v]));
-    if (rec === (kv.get("dispRec") ?? -1) && nam === (kv.get("dispName") ?? -1)) return null;
+    const same = rec === (kv.get("dispRec") ?? -1) && nam === (kv.get("dispName") ?? -1);
+    if (same && now - last.t > PairWaitRunMs) return null;
     return { rec, nam };
   }
   async dispatched(mark) {

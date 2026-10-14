@@ -157,10 +157,13 @@ export function decodeName3(words) {
 }
 
 /// 試合の記録：長さの符号 2 + 2・自分の ID・相手の ID（0 = 無し）・種目×2＋ランク戦 4・結果 2・試合番号の下 4・検査 7
+///   相手の長さの符号 3（30bit）は「相手は v2 の ID（uid の下 30bit）」の印（相手がまだ登録していない時。r.oppV2）。
+///   サーバーが配る ID は符号 2（約 419 万）までとする
 export function encodeRecord3(r) {
   const bits = [];
-  pushBits(bits, idCode(r.rid), 2); pushBits(bits, idCode(r.opp), 2);
-  pushId(bits, r.rid); pushId(bits, r.opp);
+  const oc = r.oppV2 ? 3 : idCode(r.opp);
+  pushBits(bits, idCode(r.rid), 2); pushBits(bits, oc, 2);
+  pushId(bits, r.rid); pushBits(bits, r.opp, IdBits[oc]);
   pushBits(bits, r.kind * 2 + r.ranked, 4); pushBits(bits, r.result, 2); pushBits(bits, r.mid & 15, 4);
   return finish(bits);
 }
@@ -172,6 +175,7 @@ export function decodeRecord3(words) {
   const at = 4 + a + b;
   const code = readBits(bits, at, 4);
   const r = { rid: readBits(bits, 4, a), opp: readBits(bits, 4 + a, b), kind: code >> 1, ranked: code & 1, result: readBits(bits, at + 4, 2), mid: readBits(bits, at + 6, 4) };
-  if (r.rid === 0 || r.kind > 6 || r.result > 2 || r.opp === r.rid) return null;
+  if (r.rid === 0 || r.kind > 6 || r.result > 2 || (r.opp === r.rid && b !== 30)) return null;
+  if (b === 30) r.oppV2 = true;
   return r;
 }

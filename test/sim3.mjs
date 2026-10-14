@@ -43,13 +43,22 @@ await send(2, encodeRecord({ rid: 89809756, opp: 55555, kind: 1, ranked: 1, resu
 await send(2, encodeName(55555, "OldWorld"), true, "10.0.0.6");
 await send(2, encodeName(410606822, "v2で上書き"), true, "10.0.0.9");     // v3 で登録済みの人の名前は v2 で変えられない
 
+// 相手がまだ登録していない（v2 の ID を印つきで送る）・相手の ID が登録簿に無い・古いワールドが新しい ID を相手として送る
+await send(3, encodeRecord3({ rid: a, opp: 777777777, oppV2: true, kind: 0, ranked: 1, result: 1, mid: 8 }), true, "10.0.0.1");
+await send(3, encodeRecord3({ rid: b, opp: 999, kind: 0, ranked: 1, result: 1, mid: 9 }), true, "10.0.0.2");
+await send(2, encodeRecord({ rid: 89809756, opp: b, kind: 0, ranked: 1, result: 0, mid: 10 }), false, "10.0.0.4");
+
 const d = await (await fetch(base + "/delta.txt?key=localkey&since=0,0")).text();
 console.log(d);
 const lines = d.trim().split("\n").map(l => l.split("\t"));
 const recs = lines.filter(l => l[0] === "R"), names = lines.filter(l => l[0] === "P");
-if (recs.length !== 5) fail("records " + recs.length);
+if (recs.length !== 8) fail("records " + recs.length);
 const old = recs.find(r => r[8] === "7");
 if (old[3] !== "2" || !(Number(old[4]) > 3)) fail("v2 record mapping " + old.join(" "));
+const byMid = m => recs.find(r => r[8] === String(m));
+if (!(Number(byMid(8)[4]) > 5) || byMid(8)[6] !== "1") fail("unregistered opponent (v2 id) " + byMid(8).join(" "));
+if (byMid(9)[4] !== "0" || byMid(9)[6] !== "0") fail("unknown opponent should be dropped to unranked " + byMid(9).join(" "));
+if (byMid(10)[4] !== String(b)) fail("old world sending a new id as opponent " + byMid(10).join(" "));
 if (names.some(n => n[4] === "なりすまし" || n[4] === "v2で上書き")) fail("name hijack");
 if (!names.some(n => n[4] === "OldWorld" && n[3] === old[4])) fail("v2 name mapping");
 console.log("v3 ok");
