@@ -89,11 +89,13 @@ export class Assembler extends DurableObject {
   }
 
   /// 集計（GitHub Actions）用：seq が since より後の記録と名前。呼ばれた since までは集計が保存済みなので、1 日たったら消す
+  ///   seq は AUTOINCREMENT ではなく、表が空になると 1 から振り直す。全部消すと次の記録が since 以下の番号になって
+  ///   集計に読まれなくなる（2026-10-14 に起きた）ので、いちばん新しい行は残す
   async delta(sinceRec, sinceName, now) {
     if (now - (this.cleaned || 0) > 6 * 3600 * 1000) {   // 掃除は 6 時間に 1 回（読む行数を節約）
       this.cleaned = now;
-      this.sql.exec("DELETE FROM records WHERE seq <= ? AND ts < ?", sinceRec, now - KeepMs);
-      this.sql.exec("DELETE FROM names WHERE seq <= ? AND ts < ?", sinceName, now - KeepMs);
+      this.sql.exec("DELETE FROM records WHERE seq <= ? AND ts < ? AND seq < (SELECT MAX(seq) FROM records)", sinceRec, now - KeepMs);
+      this.sql.exec("DELETE FROM names WHERE seq <= ? AND ts < ? AND seq < (SELECT MAX(seq) FROM names)", sinceName, now - KeepMs);
     }
     const recs = this.sql.exec("SELECT * FROM records WHERE seq > ? ORDER BY seq LIMIT ?", sinceRec, DeltaLimit).toArray();
     const names = this.sql.exec("SELECT * FROM names WHERE seq > ? ORDER BY seq LIMIT ?", sinceName, DeltaLimit).toArray();

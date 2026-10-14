@@ -31,6 +31,8 @@ function writeIfChanged(file, text) {
 // ---- 状態を読む ----
 const meta = Object.fromEntries(readTsv(sp("state", "meta.tsv")));
 let sinceRec = Number(meta.rec || 0), sinceName = Number(meta.name || 0);
+// 読み済みの最後の時刻。サーバーの seq が振り直された時（since を 0 に戻した時）に、読み済みの記録を二重に数えないため
+let recTs = Number(meta.recTs || 0), nameTs = Number(meta.nameTs || 0);
 const ratings = new Map();   // "rid|kind" → { rating, games }
 for (const [rid, k, r, g] of readTsv(sp("state", "ratings.tsv"))) ratings.set(rid + "|" + k, { rating: Number(r), games: Number(g) });
 const stats = new Map();     // "rid|kind" → { m, w }
@@ -51,8 +53,15 @@ for (let loop = 0; loop < 50; loop++) {
   if (!head || head[0] !== "d2") throw new Error("bad delta");
   now = Number(head[1]);
   for (const c of lines.slice(1)) {
-    if (c[0] === "R") pending.push(toRec(c.slice(1)));
-    else if (c[0] === "P") names.set(Number(c[3]), c.slice(4).join(" "));
+    if (c[0] === "R") {
+      const r = toRec(c.slice(1));
+      if (r.ts <= recTs) continue;
+      pending.push(r); recTs = r.ts;
+    } else if (c[0] === "P") {
+      const ts = Number(c[2]);
+      if (ts <= nameTs) continue;
+      names.set(Number(c[3]), c.slice(4).join(" ")); nameTs = ts;
+    }
   }
   sinceRec = Number(head[2]); sinceName = Number(head[3]);
   if (head[4] !== "1") break;
@@ -122,7 +131,7 @@ writeIfChanged(sp("state", "names.tsv"), tsv([...names.keys()].sort((a, b) => a 
 writeIfChanged(sp("state", "pending.tsv"), tsv(pending.map(r => [r.seq, r.ts, r.rid, r.opp, r.kind, r.ranked, r.result, r.mid, r.src])));
 writeIfChanged(sp("state", "done.tsv"), tsv([...done.entries()]));
 writeIfChanged(sp("state", "recent.tsv"), tsv(recent.map(e => [e.a, e.b, e.ts])));
-writeIfChanged(sp("state", "meta.tsv"), tsv([["rec", sinceRec], ["name", sinceName]]));
+writeIfChanged(sp("state", "meta.tsv"), tsv([["rec", sinceRec], ["name", sinceName], ["recTs", recTs], ["nameTs", nameTs]]));
 
 // ---- 書き出し ----
 const nm = rid => names.get(rid) || ("#" + rid.toString(36));
