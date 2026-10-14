@@ -96,7 +96,8 @@ export class Assembler extends DurableObject {
       CREATE TABLE IF NOT EXISTS names (seq INTEGER PRIMARY KEY, ts INTEGER NOT NULL, rid INTEGER NOT NULL, name TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS players (id INTEGER PRIMARY KEY AUTOINCREMENT, uid TEXT UNIQUE, rid30 INTEGER NOT NULL, ts INTEGER NOT NULL);
       CREATE INDEX IF NOT EXISTS players_rid30 ON players (rid30);
-      CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v INTEGER NOT NULL);`);
+      CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS frames (k TEXT PRIMARY KEY, need INTEGER NOT NULL, words TEXT NOT NULL, ts INTEGER NOT NULL);`);
     // 登録簿（v3）は消さない。AUTOINCREMENT なので ID を振り直さない。空の時だけ v2 からの移行の行を入れる
     if (this.sql.exec("SELECT COUNT(*) AS n FROM players").one().n === 0)
       for (const [id, rid30] of LegacyPlayers) this.sql.exec("INSERT INTO players (id, uid, rid30, ts) VALUES (?, NULL, ?, ?)", id, rid30, Date.now());
@@ -104,9 +105,14 @@ export class Assembler extends DurableObject {
 
   /// 11bit の断片を 1 つ受け取る。返事（v3 の文字列の経路だけ使う）：フレームの途中は "ok"、登録ができたら "id\t<ID>"、だめなら "bad"
   ///   v2：経路 0 = 文字列 = 試合の記録、1 = 画像 = 名前。v3：経路 0 = 文字列 = 登録・名前、1 = 画像 = 試合の記録
+  ///   組み立て中のフレームはメモリと SQLite の frames の両方に持つ。Durable Object は 10 秒ほど何も来ないとメモリから外れ、
+  ///   板の読み込みなどで送信の間が 10 秒空くとフレームが消えていた（2026-10-14、登録の 8 回中 5 回が失敗）。キーは IP ではなくハッシュ
   async push(ip, ver, ch, n, now) {
-    const key = ip + "|" + ver + "|" + ch;
-    if (++this.pushes % 1000 === 0) for (const [k, f] of this.frames) if (now - f.ts > FrameTimeoutMs) this.frames.delete(k);
+    const key = (await this.hash(ip)) + "|" + ver + "|" + ch;
+    if (++this.pushes % 1000 === 0) {
+      for (const [k, f] of this.frames) if (now - f.ts > FrameTimeoutMs) this.frames.delete(k);
+      this.sql.exec("DELETE FROM frames WHERE ts < ?", now - FrameTimeoutMs);
+    }
     const payload = n & (StartFlag - 1);
     let f;
     if (n >= StartFlag) {
@@ -116,12 +122,20 @@ export class Assembler extends DurableObject {
       this.frames.set(key, f);
     } else {
       f = this.frames.get(key);
+      if (!f) {
+        const row = this.sql.exec("SELECT need, words, ts FROM frames WHERE k = ?", key).toArray()[0];
+        if (row) { f = { need: row.need, words: JSON.parse(row.words), ts: row.ts }; this.frames.set(key, f); }
+      }
       if (!f || now - f.ts > FrameTimeoutMs) return "bad";
       f.words.push(payload);
       f.ts = now;
     }
-    if (f.words.length < f.need) return "ok";
+    if (f.words.length < f.need) {
+      this.sql.exec("INSERT OR REPLACE INTO frames (k, need, words, ts) VALUES (?, ?, ?, ?)", key, f.need, JSON.stringify(f.words), now);
+      return "ok";
+    }
     this.frames.delete(key);
+    if (f.need > 1) this.sql.exec("DELETE FROM frames WHERE k = ?", key);
     if (ver === 3 && ch === 0) {
       if ((f.words[0] >> 10) === 0) {
         const r = decodeRegister(f.words);
