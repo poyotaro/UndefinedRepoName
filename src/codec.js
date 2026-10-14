@@ -82,3 +82,96 @@ export function decodeName(words) {
 }
 /// ワールドの板もこれと同じ整え方で、自分の名前が登録済みか比べる
 export function cleanName(s) { return s.replace(/[\t\r\n]/g, " ").trim(); }
+
+// ---- プロトコル v3（2026-10-14。仕様は docs/protocol-v3.md）----
+//   ID はサーバーが配る（登録簿）。ID の前に長さの符号 2bit（0: 10bit・1: 16・2: 22・3: 30）。
+//   文字列の経路 = 登録（種類 0）と名前（種類 1）、画像の経路 = 試合の記録。
+
+export const IdBits = [10, 16, 22, 30];
+export const RegisterWords = 7;
+export function idCode(id) { return id < 1024 ? 0 : (id < 65536 ? 1 : (id < 4194304 ? 2 : 3)); }
+function pushId(bits, id) { const c = idCode(id); pushBits(bits, id, IdBits[c]); }
+function pushHex(bits, hex) { for (const ch of hex) pushBits(bits, parseInt(ch, 16), 4); }
+function readHex(bits, from, digits) { let s = ""; for (let i = 0; i < digits; i++) s += readBits(bits, from + 4 * i, 4).toString(16); return s; }
+function finish(bits) {
+  pushBits(bits, check7(bits), 7);
+  const words = bitsToWords(bits);
+  words[0] += StartFlag;
+  return words;
+}
+function checked(words, total) {
+  const bits = wordsToBits(words);
+  if (bits.length < total) return null;
+  return readBits(bits, total - 7, 7) === check7(bits.slice(0, total - 7)) ? bits : null;
+}
+export function isUid(s) { return typeof s === "string" && /^[0-9a-f]{16}$/.test(s); }
+/// uid の下 30bit（v2 の ID）
+export function rid30OfUid(uid) { return parseInt(uid.slice(-8), 16) & 0x3FFFFFFF; }
+/// 名前の合言葉：uid の先頭 24bit
+export function tagOfUid(uid) { return parseInt(uid.slice(0, 6), 16); }
+
+/// 文字列の経路のフレームの語数（最初の語の中身 11bit から）
+export function stringFrameWords(first) {
+  if ((first >> 10) === 0) return RegisterWords;
+  const len = (first >> 5) & 31, code = (first >> 3) & 3;
+  return Math.ceil((1 + 5 + 2 + IdBits[code] + 24 + 16 * len + 7) / WordBits);
+}
+/// 画像の経路（試合の記録）のフレームの語数
+export function recordFrameWords(first) {
+  const a = (first >> 9) & 3, b = (first >> 7) & 3;
+  return Math.ceil((4 + IdBits[a] + IdBits[b] + 17) / WordBits);
+}
+
+/// 登録：種類 0・uid 64・検査 7 = 72bit = 7 語
+export function encodeRegister(uid) {
+  const bits = [0];
+  pushHex(bits, uid);
+  return finish(bits);
+}
+export function decodeRegister(words) {
+  const bits = checked(words, 72);
+  if (!bits || bits[0] !== 0) return null;
+  return { uid: readHex(bits, 1, 16) };
+}
+
+/// 名前：種類 1・文字数 5・長さの符号 2・ID・合言葉 24・各文字 16・検査 7
+export function encodeName3(id, uid, name) {
+  const s = name.slice(0, MaxNameChars);
+  const bits = [1];
+  pushBits(bits, s.length, 5); pushBits(bits, idCode(id), 2); pushId(bits, id);
+  pushBits(bits, tagOfUid(uid), 24);
+  for (let i = 0; i < s.length; i++) pushBits(bits, s.charCodeAt(i), 16);
+  return finish(bits);
+}
+export function decodeName3(words) {
+  const first = words[0];
+  if ((first >> 10) !== 1) return null;
+  const len = (first >> 5) & 31, code = (first >> 3) & 3, n = IdBits[code];
+  const bits = checked(words, 1 + 5 + 2 + n + 24 + 16 * len + 7);
+  if (!bits || len === 0) return null;
+  const id = readBits(bits, 8, n), tag = readBits(bits, 8 + n, 24);
+  let s = "";
+  for (let i = 0; i < len; i++) s += String.fromCharCode(readBits(bits, 8 + n + 24 + 16 * i, 16));
+  s = cleanName(s);
+  return id > 0 && s.length > 0 ? { id, tag, name: s } : null;
+}
+
+/// 試合の記録：長さの符号 2 + 2・自分の ID・相手の ID（0 = 無し）・種目×2＋ランク戦 4・結果 2・試合番号の下 4・検査 7
+export function encodeRecord3(r) {
+  const bits = [];
+  pushBits(bits, idCode(r.rid), 2); pushBits(bits, idCode(r.opp), 2);
+  pushId(bits, r.rid); pushId(bits, r.opp);
+  pushBits(bits, r.kind * 2 + r.ranked, 4); pushBits(bits, r.result, 2); pushBits(bits, r.mid & 15, 4);
+  return finish(bits);
+}
+export function decodeRecord3(words) {
+  const first = words[0];
+  const a = IdBits[(first >> 9) & 3], b = IdBits[(first >> 7) & 3];
+  const bits = checked(words, 4 + a + b + 17);
+  if (!bits) return null;
+  const at = 4 + a + b;
+  const code = readBits(bits, at, 4);
+  const r = { rid: readBits(bits, 4, a), opp: readBits(bits, 4 + a, b), kind: code >> 1, ranked: code & 1, result: readBits(bits, at + 4, 2), mid: readBits(bits, at + 6, 4) };
+  if (r.rid === 0 || r.kind > 6 || r.result > 2 || r.opp === r.rid) return null;
+  return r;
+}
