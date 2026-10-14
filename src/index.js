@@ -12,6 +12,7 @@ const Png1x1 = Uint8Array.from(atob(
 const noStore = { "Cache-Control": "no-store, max-age=0" };
 const FrameTimeoutMs = 3 * 60 * 1000;     // 断片の間がこれより空いたら組み立て中のフレームを捨てる
 const KeepMs = 24 * 3600 * 1000;          // 集計が読んだ記録を消すまでの時間
+const GitHubRepo = "poyotaro/UndefinedRepoName";   // 集計（.github/workflows/export.yml）のあるリポジトリ
 const DeltaLimit = 5000;
 
 function assembler(env) { return env.ASM.get(env.ASM.idFromName("main")); }
@@ -36,6 +37,24 @@ export default {
       return new Response(text, { headers: { ...noStore, "Content-Type": "text/plain; charset=utf-8" } });
     }
     return new Response("not found", { status: 404 });
+  },
+
+  /// 毎時 0・15・30・45 分に集計（GitHub Actions の export-ranking）を起動する（2026-10-14）。
+  ///   GitHub の schedule は 5〜25 分遅れるので、ワールドの板が更新の時刻を数えられるように、起動はこちらで決める。
+  ///   GitHub 側の schedule は予備として残す（このトークンが切れても集計は止まらない）
+  async scheduled(controller, env, ctx) {
+    if (!env.GH_DISPATCH_TOKEN) { console.log("dispatch: no token"); return; }
+    const res = await fetch(`https://api.github.com/repos/${GitHubRepo}/actions/workflows/export.yml/dispatches`, {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer " + env.GH_DISPATCH_TOKEN,
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "poyo-billiards-ranking",
+      },
+      body: JSON.stringify({ ref: "main" }),
+    });
+    if (res.status !== 204) console.log("dispatch", res.status, await res.text());
   },
 };
 

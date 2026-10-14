@@ -3,7 +3,7 @@
 name: export-ranking
 on:
   schedule:
-    - cron: "*/15 * * * *"
+    - cron: "7 * * * *"   # 予備（本来の起動は Worker の Cron Trigger が毎時 0・15・30・45 分に workflow_dispatch で行う）
   workflow_dispatch:
 permissions:
   contents: write
